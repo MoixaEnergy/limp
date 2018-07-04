@@ -7,6 +7,7 @@ import Numeric.Limp.Rep
 import qualified Data.Map as M
 import qualified Data.Set as S
 import Data.Either
+import Data.Maybe (mapMaybe)
 
 instance (Show (Z c), Show (R c), Rep c, Show z, Show r, Ord z, Ord r) => Show (Program z r c) where
  show = ppr show show
@@ -19,7 +20,7 @@ ppr pZ pR p
  , "Subject to"
  , pprCs $ _constraints p
  , "Bounds"
- , pprBs $ _bounds p
+ , pprBs (varsOfProgram p) (_bounds p)
  , "Generals"
  , pprGs $ varsOfProgram p ]
 
@@ -27,7 +28,7 @@ ppr pZ pR p
   indent = ("\t"++)
 
   pprV v
-   = filter (/=' ') $ either pZ pR v
+   = map (\c -> if c == ' ' then '_' else c) $ either pZ pR v
 
   pprL (Linear m)
    = pprLf
@@ -54,12 +55,25 @@ ppr pZ pR p
    = unlines $ map indent $ concatMap pprC cs
 
   pprC (C1 lo f up)
-   =  case lo of
-       Nothing  -> []
-       Just lo' -> [pprL f ++ " >= " ++ show lo']
-   ++ case up of
-       Nothing  -> []
-       Just up' -> [pprL f ++ " <= " ++ show up']
+   =  case (lo, up) of
+        (Just lo', Just up') ->
+          if lo' == up'
+          then [pprL f ++ " = " ++ show lo']
+          else normalCase
+
+        _ ->
+          normalCase
+
+   where normalCase
+           =  case lo of
+                Nothing  -> []
+                Just lo' -> [pprL f ++ " >= " ++ show lo']
+           ++ case up of
+                Nothing  -> []
+                Just up' -> [pprL f ++ " <= " ++ show up']
+
+
+
 
   pprLo (Just l)
    = show l ++ " <= "
@@ -71,14 +85,32 @@ ppr pZ pR p
   pprUp Nothing
    = ""
 
-  pprBs m
-   = unlines $ map (indent.pprB) $ M.toList m
+  pprBs vars bounds
+   = unlines $ map indent $ mapMaybe pprB (M.toList bounds) ++ map pprFree (S.toList freeVars)
+
+   where freeVars = S.difference vars (M.keysSet bounds)
 
   pprB (v, (lo,up))
-   = pprLo lo ++ pprV v ++ pprUp up
+   = case (lo, up) of
+       (Just lo, Nothing) ->
+         if lo == 0
+         then Nothing
+         else normalCase
+
+       (Just lo, Just hi) ->
+         if lo == hi
+         then Just $ pprV v ++ " = " ++ show lo
+         else normalCase
+
+       _ ->
+         normalCase
+
+   where normalCase = Just $ pprLo lo ++ pprV v ++ pprUp up
+
+  pprFree v =
+    pprV v ++ " free"
 
   pprGs fvs
-   = unlines $ map pprV
+   = unlines $ map (indent . pprV)
    $ filter isLeft
    $ S.toList fvs
-
